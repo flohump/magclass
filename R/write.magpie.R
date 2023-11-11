@@ -3,7 +3,7 @@
 #' Writes a MAgPIE-3D-array (cells,years,datacolumn) to a file in one of three
 #' MAgPIE formats (standard, "magpie", "magpie zipped")
 #'
-#' This function can write 13 different MAgPIE file\_types. "cs2" is the new
+#' This function can write 13 different MAgPIE file_types. "cs2" is the new
 #' standard format for cellular data with or without header and the first
 #' columns (year,regiospatial) or only (regiospatial), "cs2b" is identical to
 #' "cs2" except that it will suppress the data name if it has only 1 element
@@ -27,24 +27,24 @@
 #' been previously created from a magclass object via as.RasterBrick)
 #' @param file_name file name including file ending (wildcards are supported).
 #' Optionally also the full path can be specified here (instead of splitting it
-#' to file\_name and file\_folder)
+#' to file_name and file_folder)
 #' @param file_folder folder the file should be written to (alternatively you
-#' can also specify the full path in file\_name - wildcards are supported)
+#' can also specify the full path in file_name - wildcards are supported)
 #' @param file_type Format the data should be stored as. Currently the following formats
 #' are available: "rds" (default R-data format), "cs2" (cellular standard
 #' MAgPIE format), "cs2b" (cellular standard MAgPIE format with suppressed header ndata=1),
 #' "csv" (regional standard MAgPIE format), "cs3" (Format for multidimensional MAgPIE
 #' data, compatible to GAMS), "cs4" (alternative multidimensional format compatible
-#' to GAMS, in contrast to cs3 it can also handle sparse data), "csvr", "cs2r",
-#' "cs3r" and "cs4r" which are the same formats as the previous mentioned ones
+#' to GAMS, in contrast to cs3 it can also handle sparse data), "cs5" (more generalized version of cs4),
+#' "csvr", "cs2r", "cs3r" and "cs4r" which are the same formats as the previous mentioned ones
 #' with the only difference that they have a REMIND compatible format, "m"
 #' (binary MAgPIE format "magpie"), "mz" (compressed binary MAgPIE format
 #' "magpie zipped"), "asc" (ASCII grid format), "nc" (netCDF format), "tif"
-#' (GEOtiff format) and "grd" (native raster format). If file\_type=NULL
-#' the file ending of the file\_name is used as format. If
+#' (GEOtiff format) and "grd" (native raster format). If file_type=NULL
+#' the file ending of the file_name is used as format. If
 #' format is different to the formats mentioned standard MAgPIE format is
-#' assumed. Please be aware that the file\_name is independent of the
-#' file\_type you choose here, so no additional file ending will be added!
+#' assumed. Please be aware that the file_name is independent of the
+#' file_type you choose here, so no additional file ending will be added!
 #' @param append Decides whether an existing file should be overwritten (FALSE)
 #' or the data should be added to it (TRUE). Append = TRUE only works if the
 #' existing data can be combined with the new data using the mbind function
@@ -227,12 +227,12 @@ write.magpie <- function(x, file_name, file_folder = "", file_type = NULL, appen
       if (is.null(comment)) {
        unit <- "not specified"
       } else {
-        indicators <- substring(text = comment, first = 1, last = regexpr(pattern = ": ", text = comment) - 1)
-        units <- substring(text = comment, first = (regexpr(pattern = ": ", text = comment) + 2))
-        if (!any(indicators == "unit")) {
-          unit <- "not specified"
+        indicators <- sub(":.*$", "", comment)
+        units <- sub("^.*: ", "", comment)
+        if (any(grepl("unit", indicators))) {
+          unit <- units[grep("unit", indicators)]
         } else {
-          unit <- units[which(indicators == "unit")]
+          unit <- "not specified"
         }
       }
       # raster is using partial matching resulting in a warning if warnPartialMatchDollar is set
@@ -310,6 +310,22 @@ write.magpie <- function(x, file_name, file_folder = "", file_type = NULL, appen
       write.table(output, file = zz, quote = FALSE, row.names = FALSE, col.names = FALSE, sep = ",")
       close(zz)
       Sys.chmod(filePath, mode)
+    } else if (file_type == "cs5") {
+      output <- as.data.frame(x, rev = 3, raw = TRUE)
+
+      .formatMeta <- function(meta, commentChar) {
+        out <- NULL
+        for (n in names(meta)) {
+          out <- c(out, paste0(commentChar, "META ", n, ": ", paste(meta[[n]], collapse = ", ")))
+        }
+        return(out)
+      }
+
+      zz <- file(filePath, open = "w")
+      if (any(comment != "")) writeLines(paste(comment.char, comment, sep = ""), zz)
+      writeLines(.formatMeta(attributes(output)[c("names", "dimtype")], comment.char), zz)
+      write.table(output, file = zz, quote = FALSE, row.names = FALSE, col.names = FALSE, sep = ",")
+      close(zz)
 
     } else {
       printCells <- nregions(x) < ncells(x)

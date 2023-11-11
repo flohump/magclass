@@ -1,9 +1,9 @@
 #' @importFrom methods new setGeneric
-#' @importFrom forcats fct_explicit_na
 #' @importFrom data.table as.data.table tstrsplit melt
 
 #' @exportMethod as.magpie
-setGeneric("as.magpie", function(x, ...) standardGeneric("as.magpie"))
+setGeneric(
+  "as.magpie", function(x, ...) standardGeneric("as.magpie"))
 
 setMethod("as.magpie", signature(x = "magpie"), function(x) return(x))
 
@@ -47,6 +47,26 @@ setMethod("as.magpie",
   }
 )
 
+setMethod("as.magpie",
+          signature(x = "LPJmLData"),
+          function(x) {
+            if (!requireNamespace("lpjmlkit", quietly = TRUE)) {
+              stop("The package \"lpjmlkit\" is required for LPJmLData conversions!")
+            }
+            y <- lpjmlkit::transform(x, to = c("cell", "time"))
+            y <- lpjmlkit::as_array(y)
+            if (!is.null(x$grid)) {
+              grid <- paste0(sub(".", "p", x$grid$data[, 1], fixed = TRUE), ".",
+                             sub(".", "p", x$grid$data[, 2], fixed = TRUE))
+              names(grid) <- rownames(x$grid$data)
+              dimnames(y)[[1]] <- paste0(grid[dimnames(y)[[1]]], ".", dimnames(y)[[1]])
+              names(dimnames(y))[1] <- c("x.y.cell")
+            }
+            out <- new("magpie", y)
+            return(out)
+          }
+)
+
 setMethod("as.magpie", # nolint
   signature(x = "array"),
   function(x, spatial = NULL, temporal = NULL, unit = "unknown", ...) {
@@ -75,7 +95,9 @@ setMethod("as.magpie", # nolint
         if (is.null(temporal)) {
           if (is.temporal(dimnames(x)[[i]])) d$temporal <- c(d$temporal, i) # temporal information
         }
-      } else if (dim(x)[i] == 1) d$nothing <- c(d$nothing, i)   # dimension with no content
+      } else if (dim(x)[i] == 1) {
+        d$nothing <- c(d$nothing, i)   # dimension with no content
+      }
     }
 
     if (!is.null(spatial)) {
@@ -214,7 +236,7 @@ setMethod("as.magpie",
         if (.isFALSE(.tmp(x[1]))) return(FALSE)
         return(.tmp(x))
       }
-      for (i in dim(x)[2]:1) {
+      for (i in rev(seq_len(dim(x)[2]))) {
         if (!is.factor(x[[i]]) && isNumericlike(x[[i]]) && !is.temporal(x[[i]])) {
           datacol <- i
         } else {
@@ -223,6 +245,12 @@ setMethod("as.magpie",
       }
     }
     if (!is.null(datacol)) {
+      if (is.character(datacol)) {
+        datacol <- which(colnames(x) == datacol)
+        if (length(datacol) != 1) {
+          stop("datacol does not clearly match one column name.")
+        }
+      }
       if (datacol == 1) return(copy.attributes(x, as.magpie(as.matrix(x), ...)))
       if (datacol == dim(x)[2]) return(tidy2magpie(x, ...))
       x[[datacol - 1]] <- as.factor(x[[datacol - 1]])
@@ -244,7 +272,6 @@ setMethod("as.magpie",
   signature(x = "quitte"),
   function(x, sep = ".", replacement = "_", filter = TRUE, ...) {
     isQuitte <- function(x) {
-
       # object is formally defined as quitte but it has to
       # be checked whether it follows all structural
       # rules of a quitte object
@@ -274,7 +301,7 @@ setMethod("as.magpie",
       x <- x[names(x) != i]
     }
     # remove NA columns and <NA> columns that have been replaced by forcats::fct_explicit_na()
-    naString <- formals(fct_explicit_na)[["na_level"]]
+    naString <- "(Missing)"
     x <- x[colSums(!(naString == x | is.na(x))) != 0]
 
     # put value column as last column
@@ -300,36 +327,85 @@ setMethod("as.magpie",
 )
 
 
-.raster2magpie <- function(x, unit = "unknown", temporal = NULL) {
-  if (!requireNamespace("raster", quietly = TRUE)) stop("The package \"raster\" is required for raster conversions!")
-  # na.rm = TRUE seems to remove all cells in which at least one layer has an NA. Hence, use na.rm = FALSE
-  # and remove all cells which have NAs in ALL layers afterwards!
-  df <- as.data.frame(x, na.rm = FALSE)
-  df <- df[rowSums(!is.na(df)) != 0, , drop = FALSE]
+.raster2magpie <- function(x, unit = "unknown", temporal = NULL, spatial = NULL) {
+  geometry <- NULL
+  idVars <- NULL
+  crs <- NULL
+  if (inherits(x, "SpatRaster")) {
+    if (!requireNamespace("terra", quietly = TRUE)) stop("The package \"terra\" is required for raster conversions!")
+    df <- as.data.frame(x, na.rm = TRUE, xy = TRUE)
+    df$x <- sub(".", "p", df$x, fixed = TRUE)
+    df$y <- sub(".", "p", df$y, fixed = TRUE)
+    idVars <- c("x", "y")
+    crs <- terra::crs(x)
+  } else if (inherits(x, "SpatVector")) {
+    if (!requireNamespace("terra", quietly = TRUE)) stop("The package \"terra\" is required for raster conversions!")
+    df <- as.data.frame(x, geom = "WKT")
+    geometry <- df$geometry
+    df$geometry <- NULL
+    crs <- terra::crs(x)
+  } else {
+    if (!requireNamespace("raster", quietly = TRUE)) stop("The package \"raster\" is required for raster conversions!")
+    # na.rm = TRUE seems to remove all cells in which at least one layer has an NA. Hence, use na.rm = FALSE
+    # and remove all cells which have NAs in ALL layers afterwards!
+    df <- as.data.frame(x, na.rm = FALSE)
+    df <- df[rowSums(!is.na(df)) != 0, , drop = FALSE]
 
-  co <- raster::coordinates(x)[as.integer(rownames(df)), ]
-  co <- matrix(sub(".", "p", co, fixed = TRUE), ncol = 2)
-  colnames(co) <- c("x", "y")
-  df <- as.data.table(cbind(co, df))
-  df <- melt(df, id.vars = c("x", "y"))
+    co <- raster::coordinates(x)[as.integer(rownames(df)), ]
+    co <- matrix(sub(".", "p", co, fixed = TRUE), ncol = 2)
+    colnames(co) <- c("x", "y")
+    df <- cbind(co, df)
+    idVars <- c("x", "y")
+  }
+
+  # check for additional spatial identifiers
+  if (is.null(spatial)) {
+    # select all layers with a leading dot in its name as spatial dimension
+    spatial <- grep("^\\.", names(x), value = TRUE)
+  } else {
+    if (all(is.integer(spatial))) {
+      spatial <- names(x)[spatial]
+    }
+  }
+  names(df) <- sub("^\\.", "", names(df))
+  spatial  <- sub("^\\.", "", spatial)
+
+  idVars <- c(spatial, idVars)
+
+  if (length(idVars) == 0) {
+    df <- cbind(id = df[[1]], df)
+    idVars <- "id"
+  }
+
+  df <- as.data.table(df)
+  df <- melt(df, id.vars = idVars)
   variable <- as.data.table(tstrsplit(df$variable, "..", fixed = TRUE))
-  if (!is.null(temporal)) temporal <- temporal + 2
+  if (!is.null(temporal)) temporal <- temporal + length(idVars)
   if (ncol(variable) == 1) {
     if (all(grepl("^[yX][0-9]*$", variable[[1]], perl = TRUE))) {
       variable[[1]] <- sub("^X", "y", variable[[1]], perl = TRUE)
       names(variable) <- "year"
-      if (is.null(temporal)) temporal <- 3
+      if (is.null(temporal)) temporal <- length(idVars) + 1
     } else {
       names(variable) <- "data"
     }
   } else if (ncol(variable) == 2) {
     names(variable) <- c("year", "data")
-    if (is.null(temporal)) temporal <- 3
+    if (is.null(temporal)) temporal <- length(idVars) + 1
   } else {
     stop("Reserved dimension separator \"..\" occurred more than once in layer names! Cannot convert raster object")
   }
-  df <- cbind(df[, 1:2], variable, df[, 4])
-  out <- tidy2magpie(df, spatial = 1:2, temporal = temporal)
+  df <- as.data.frame(df)
+  baseDims <- which(!(colnames(df) %in% c("variable", "value")))
+  df <- cbind(df[, baseDims, drop = FALSE], variable, df[, "value", drop = FALSE])
+  out <- tidy2magpie(df, spatial = idVars, temporal = temporal)
+  if (!is.null(geometry)) {
+    names(geometry) <- getItems(out, dim = 1)
+    attr(out, "geometry") <- geometry
+  }
+  if (!is.null(crs)) {
+    attr(out, "crs") <- crs
+  }
   return(out)
 }
 
@@ -352,4 +428,18 @@ setMethod("as.magpie",
   function(x, unit = "unknown", temporal = NULL, ...) {
     return(.raster2magpie(x, unit = unit, temporal = temporal))
   }
+)
+
+setMethod("as.magpie",
+          signature(x = "SpatRaster"),
+          function(x, unit = "unknown", temporal = NULL, ...) {
+            return(.raster2magpie(x, unit = unit, temporal = temporal))
+          }
+)
+
+setMethod("as.magpie",
+          signature(x = "SpatVector"),
+          function(x, unit = "unknown", temporal = NULL, spatial = NULL, ...) {
+            return(.raster2magpie(x, unit = unit, temporal = temporal, spatial = spatial))
+          }
 )

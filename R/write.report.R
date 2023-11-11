@@ -47,6 +47,16 @@ write.report <- function(x, file = NULL, model = NULL, scenario = NULL, unit = N
     }
   } else {
     if (!is.magpie(x)) stop("Input is not a MAgPIE object!")
+
+    if (all(is.na(x)) && isTRUE(skipempty)) {
+      msg <- "magclass object contains only NAs, returning empty data table."
+      if (!is.null(file)) {
+        msg <- paste0(msg, " No file was written.")
+      }
+      message(msg)
+      return(data.table::data.table())
+    }
+
     x <- prepareData(x, model = model, scenario = scenario, unit = unit, skipempty = skipempty,
                      ndigit = ndigit, extracols = extracols)
     if (is.null(file)) return(x)
@@ -82,6 +92,7 @@ write.report <- function(x, file = NULL, model = NULL, scenario = NULL, unit = N
 
 prepareData <- function(x, model = NULL, scenario = NULL, unit = NULL, skipempty = FALSE,
                         ndigit = 4, extracols = NULL) {
+
   sep <- "."
   # clean data
   x <- round(clean_magpie(x, what = "sets"), digits = ndigit)
@@ -164,41 +175,5 @@ prepareData <- function(x, model = NULL, scenario = NULL, unit = NULL, skipempty
   data[is.na(data)] <- "N/A"
   x <- cbind(x, data)
   x <- x[do.call("order", x[c("Scenario", "Model", "Variable", "Region")]), ]
-  return(x)
-}
-
-unitsplit <- function(x, col) {
-  # structure of this regex (flavor: PCRE2):
-  # '^' start of the string
-  # '(?P<varname>…)' a named capture group for the varname. It contains:
-  #   '.*' greedy everything
-  # ' ' separator: a space
-  # '(?P<recurse>…)' a named capture group for recursion to match balanced parentheses in the unit. It contains:
-  #   '\\(' a literal opening parenthesis
-  #   '(?P<unit>…)' a named capture group for the unit. It contains:
-  #      '(?>…)*' an atomic non-capturing group which is repeated zero or more times. It contains:
-  #          `[^()|]` any character which is neither a parenthesis or the pipe symbol
-  #          `|` or
-  #          `(?P>recurse)` a match for the named capture group "recurse".
-  #          As the named capture group "recurse" contains exactly one literal opening and closing parenthesis, this
-  #          recursion makes sure that parentheses in the unit are always balanced - if a parenthesis needs to be
-  #          matched, we have to repeat the whole "recurse" capture group, and therefore, we need exactly one literal
-  #          opening and closing parenthesis (or another recursion).
-  #   '\\)' a literal closing parenthesis
-  # '$' end of the string
-  # If you have to understand the regex, I can warmly recommend putting it into https://regex101.com/ or a similar
-  # service. Just replace all '\\' by '\', double backslashes are an R thing.
-  pattern <- "^(?P<varname>.*) (?P<recurse>\\((?P<unit>(?>[^()|]|(?P>recurse))*)\\))$"
-  # Even though we use named capture groups in the pattern, we can't use names in the replacement, because sub() only
-  # supports numbered replacements. \\1 is the named capture group "varname", \\3 is the named capture group "unit".
-  # Note that if the pattern does not match (e.g. because the value in question does not contain a unit), sub will not
-  # replace anything, effectively passing everything through unchanged to varName and unit. That's correct for varName,
-  # but for the unit, we have to overwrite non-matches with "N/A".
-  varName <- sub(pattern, "\\1", x[[col]], perl = TRUE)
-  unit <- sub(pattern, "\\3", x[[col]], perl = TRUE)
-  unit[grep(pattern, x[[col]], invert = TRUE, perl = TRUE)] <- "N/A"
-  tmp <- data.frame(varName, unit, stringsAsFactors = FALSE)
-  names(tmp) <- c(names(x)[col], "unit")
-  x <- cbind(tmp, x[setdiff(seq_len(ncol(x)), col)])
   return(x)
 }
