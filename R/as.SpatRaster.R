@@ -21,20 +21,9 @@
 #' @export
 
 
-as.SpatRaster <- function(x, res = NULL) { # nolint: object_name_linter
+as.SpatRaster <- function(x, res = NULL) { # nolint: object_name_linter.
   if (!is.magpie(x)) stop("Input is not a magpie object")
   if (!requireNamespace("terra", quietly = TRUE)) stop("The package \"terra\" is required!")
-
-  .guessRes <- function(xy) {
-    .tmp <- function(x) {
-      return(min(diff(sort(unique(x)))))
-    }
-    guess <- min(.tmp(xy[[1]]), .tmp(xy[[2]]))
-    # use 0.5deg as guess if it cannot be determined otherwise as this is
-    # the default spatial resolution in the magpie universe.
-    if (is.infinite(guess)) guess <- 0.5
-    return(guess)
-  }
 
   if (!hasCoords(x) && dimExists(1.2, x)) {
     items <- getItems(x, dim = 1.2)
@@ -46,7 +35,7 @@ as.SpatRaster <- function(x, res = NULL) { # nolint: object_name_linter
     }
   }
   xy <- getCoords(x)
-  if (is.null(res)) res <- .guessRes(xy)
+  if (is.null(res)) res <- guessResolution(xy)
 
   m <- wrap(as.array(x), list(1, 2:3), sep = "..")
   xyz <- cbind(xy, m)

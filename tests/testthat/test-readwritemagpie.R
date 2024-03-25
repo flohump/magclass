@@ -78,38 +78,52 @@ test_that("read supports older formats", {
 })
 
 test_that("handling of spatial data works", {
-  td <- tempdir()
+  skip_if_not_installed("ncdf4")
+  td <- withr::local_tempdir()
+
   md <- magclass:::magclassdata$half_deg
-  m05 <- new.magpie(paste0(md$region, ".", seq_len(dim(md)[1])), years = c(2000, 2001), fill = c(md$lon, md$lat))
+  m05 <- new.magpie(paste0(md$region, ".", seq_len(dim(md)[1])), years = c(2000, 2001),
+                    names = "nctest", fill = c(md$lon, md$lat))
   m10 <- mbind(m05, m05)
+
+  expect_silent(write.magpie(m05, file.path(td, "test.nc")))
+  expect_silent(m05in <- read.magpie(file.path(td, "test.nc")))
+
+  getCoords(m05) <- md[c("lon", "lat")]
+  getItems(m05, "region") <- NULL
+  getItems(m05, "region1") <- NULL
+  m05 <- m05[getItems(m05in, dim = 1), , ]
+
+  expect_identical(m05, m05in)
+
   getNames(m10) <- c("bla", "blub")
   expect_error(write.magpie(m10, file.path(td, "test.grd")), "no support for multiple variables")
   expect_no_warning(write.magpie(m10, file.path(td, "test.nc")))
-  expect_silent(write.magpie(m05, file.path(td, "test.nc")))
-  expect_silent(m05in <- read.magpie(file.path(td, "test.nc")))
-  getCoords(m05) <- magclass:::magclassdata$half_deg[c("lon", "lat")]
-  m05 <- collapseDim(m05, dim = c(1.1, 1.2))
-  m05 <- m05[getItems(m05in, dim = 1), , ]
-  getNames(m05in) <- NULL
-  getSets(m05in, fulldim = FALSE)[3] <- "data"
-  attr(m05in, ".internal.selfref")  <- NULL # nolint
-  expect_identical(m05, m05in)
 
   a <- maxample("animal")
   a <- dimSums(a, dim = c(1.3, 1.4, 2, 3))
   write.magpie(a, file.path(td, "animal.asc"))
-  copy.magpie(file.path(td, "animal.asc"), file.path(td, "animal.nc"))
   asc <- read.magpie(file.path(td, "animal.asc"))
-  expect_silent(anc <- read.magpie(file.path(td, "animal.nc")))
+  attr(asc, ".internal.selfref")  <- NULL # nolint
+  getItems(asc, dim = 2) <- NULL
+  getItems(asc, dim = 3) <- NULL
+  expect_identical(asc, a)
 
-  .clean <- function(x) {
-    attr(x, ".internal.selfref")  <- NULL # nolint
-    getItems(x, dim = 2) <- NULL
-    getItems(x, dim = 3) <- NULL
-    return(x)
-  }
-  expect_identical(.clean(asc), a)
-  expect_identical(.clean(anc), a)
+  expect_error({
+    write.magpie(a, file.path(td, "animal.nc"), unknownArg = TRUE, blabla = 1)
+  }, "Unknown argument passed to writeNC: unknownArg, blabla")
+
+  write.magpie(a, file.path(td, "animal.nc"), verbose = FALSE)
+  expect_silent(anc <- read.magpie(file.path(td, "animal.nc")))
+  getItems(anc, dim = 3) <- NULL
+  getSets(anc) <- c("x", "y", "d2", "d3")
+  expect_identical(anc, a)
+
+  write.magpie(a, file.path(td, "animal2.nc"), gridDefinition = c(3, 7, 49, 54, 0.25))
+  animalRaster <- ncdf4::nc_open(file.path(td, "animal2.nc"))
+  withr::defer(ncdf4::nc_close(animalRaster))
+  expect_identical(as.vector(animalRaster$dim$lon$vals), seq(3, 7, 0.25))
+  expect_identical(as.vector(animalRaster$dim$lat$vals), seq(54, 49, -0.25))
 })
 
 
@@ -155,9 +169,11 @@ test_that("read/write triggers errors and warnings correctly", {
   expect_error(read.magpie(tmpfile), "does not contain a magpie object")
   unlink(tmpfile)
 
-  expect_error(write.magpie(as.magpie(1), "bla.nc"), "No coordinates")
   expect_error(write.magpie(a, "blub.grd"), "no support for multiple variables")
   expect_error(write.magpie(a[, , 1], "blub.asc"), "choose just one")
+
+  skip_if_not_installed("ncdf4")
+  expect_error(write.magpie(as.magpie(1), "bla.nc"), "No coordinates")
 })
 
 test_that("copy.magpie works", {
